@@ -12,6 +12,7 @@ require (
 	github.com/nicksnyder/go-i18n v1.10.1 // indirect
 	github.com/oleiade/lane v1.0.0
 	github.com/pkg/errors v0.9.1
+	github.com/robfig/cron v1.2.0
 	github.com/stretchr/testify v1.5.1
 	google.golang.org/grpc v1.24.0
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect

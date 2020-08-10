@@ -1,12 +1,11 @@
 package main
 
 import (
-	"math/rand"
 	"sync"
 
-	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/plugin"
 	"github.com/pkg/errors"
+	"github.com/robfig/cron"
 )
 
 // Plugin implements the interface expected by the Mattermost server to communicate between the server and plugin processes.
@@ -16,53 +15,49 @@ type Plugin struct {
 	// configurationLock synchronizes access to the configuration.
 	configurationLock sync.RWMutex
 
-	// botID stores the id of our plguin bot
-	botID string
-
 	// configuration is the active plugin configuration. Consult getConfiguration and
 	// setConfiguration for usage.
 	configuration *configuration
+
+	//This is our cron-instance, triggering the right messages at the right time
+	pluginCron *cron.Cron
 }
 
-//Question stores information about a icebreaker question
-type Question struct {
-	Creator  string `json:"creator"`
-	Question string `json:"question"`
+//ScheduledMessage stores information about a message that has been scheduled with the plugin
+type ScheduledMessage struct {
+	Creator   string `json:"creator"` //userID of the author
+	TeamID    string `json:"teamID"`
+	ChannelID string `json:"channelID"`
+	Cron      string `json:"cron"`
+	Message   string `json:"message"`
 }
 
-//IceBreakerData contains all data necessary to be stored for the Icebreaker Plugin
-type IceBreakerData struct {
-	Questions     []Question `json:"Questions"`
-	LastUsers     []string   `json:"LastUsers"`
-	LastQuestions []Question `json:"LastQuestions"`
+//SchedulerData contains all data necessary to be stored for the Scheduler Plugin
+type SchedulerData struct {
+	ScheduledMessages []ScheduledMessage `json:"ScheduledMessage"`
 }
-
-//LenHistory sets how many LastUsers/LastQuestions are stored to avoid asking the same users or same questions over and over
-const LenHistory int = 50
 
 // OnActivate is invoked when the plugin is activated.
 //
 // This demo implementation logs a message to the demo channel whenever the plugin is activated.
 // It also creates a demo bot account
 func (p *Plugin) OnActivate() error {
-	//init the rand
-	rand.Seed(1337)
-
 	//register all our commands
 	if err := p.registerCommands(); err != nil {
 		return errors.Wrap(err, "failed to register commands")
 	}
 
-	//make sure the bot exists
-	botID, ensureBotError := p.Helpers.EnsureBot(&model.Bot{
-		Username:    "icebreaker",
-		DisplayName: "IceBreaker Bot",
-		Description: "A bot created to break the ice",
-	}, plugin.ProfileImagePath("/assets/icecube.png"))
-	if ensureBotError != nil {
-		return errors.Wrap(ensureBotError, "failed to ensure icebreaker bot.")
+	err := p.ClearStorage()
+	if err != nil {
+		return errors.Wrap(err, "failed to clear storage")
 	}
-	p.botID = botID
+
+	data := p.ReadFromStorage()
+	p.pluginCron = cron.New()
+	for _, msg := range data.ScheduledMessages {
+		p.pluginCron.AddFunc(msg.Cron, func() { p.postMessage(msg) })
+	}
+	p.pluginCron.Start()
 
 	return nil
 }
