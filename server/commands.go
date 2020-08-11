@@ -7,7 +7,6 @@ import (
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/plugin"
 	"github.com/pkg/errors"
-	"github.com/robfig/cron"
 )
 
 const (
@@ -89,24 +88,22 @@ func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*mo
 func (p *Plugin) executeCommandScheduler(args *model.CommandArgs) *model.CommandResponse {
 	return &model.CommandResponse{
 		ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL,
-		Text:         "This plugin schedules messages. Add a new one by calling `/scheduler <cron>:<message>`",
+		Text:         "This plugin schedules messages. Add a new one by calling `/scheduler add <cron>:<message>`",
 	}
 }
 
-
-TODO: Unittest um Remove ab ExecuteCommand zu checken... Scheint noch nicht zu funktionieren -.-
 func (p *Plugin) executeCommandSchedulerRemove(args *model.CommandArgs) *model.CommandResponse {
 	data := p.ReadFromStorage()
 
-	indeces, errResponse := getIndeces(args.Command, data.ScheduledMessages)
+	index, errResponse := getIndex(args.Command, data.ScheduledMessages)
 	if errResponse != nil {
 		return errResponse
 	}
 
-	for _, index := range indeces {
-		//from https://stackoverflow.com/a/37335777/199513
-		data.ScheduledMessages = append(data.ScheduledMessages[:index], data.ScheduledMessages[index+1:]...)
-	}
+	p.pluginCron.Remove(data.ScheduledMessages[index].CronID)
+
+	//from https://stackoverflow.com/a/37335777/199513
+	data.ScheduledMessages = append(data.ScheduledMessages[:index], data.ScheduledMessages[index+1:]...)
 	p.WriteToStorage(&data)
 
 	return &model.CommandResponse{
@@ -126,13 +123,21 @@ func (p *Plugin) executeCommandSchedulerList(args *model.CommandArgs) *model.Com
 	}
 
 	message := "Scheduled Messages:\n"
+	message = message + "| Index | TeamID | ChannelID | Author | Cron | Message |\n"
+	message = message + "| :---- | :----- | :-------- | :----- | :--- | :------ |\n"
 	for index, scheduledMsg := range data.ScheduledMessages {
 		creator := scheduledMsg.Creator
 		user, err := p.API.GetUser(creator)
 		if err == nil {
 			creator = user.GetDisplayName("")
 		}
-		message = message + fmt.Sprintf("%d.\t%s (%s):\t%s\n", index, scheduledMsg.Cron, creator, scheduledMsg.Message)
+		channelName := scheduledMsg.ChannelID
+		channel, err := p.API.GetChannel(channelName)
+		if err == nil {
+			channelName = channel.DisplayName
+		}
+
+		message = message + fmt.Sprintf("| %d | %s | %s | %s | %s | %s |\n", index, scheduledMsg.TeamID, channelName, creator, scheduledMsg.Cron, scheduledMsg.Message)
 	}
 
 	return &model.CommandResponse{
@@ -141,7 +146,6 @@ func (p *Plugin) executeCommandSchedulerList(args *model.CommandArgs) *model.Com
 	}
 }
 
-TODO: Scheint als wenn Commands nur als Text gepostet werden - sollen aber ja excuted werden als wenn der User die schreibt
 func (p *Plugin) executeCommandSchedulerAdd(args *model.CommandArgs) *model.CommandResponse {
 	//check the user input and extract cron and message from it
 	givenText := strings.TrimPrefix(args.Command, fmt.Sprintf("/%s", commandSchedulerAdd))
@@ -163,16 +167,14 @@ func (p *Plugin) executeCommandSchedulerAdd(args *model.CommandArgs) *model.Comm
 		Message:   fields[1],
 	}
 
-	//check if the cron-syntax is valid
-	_, err := cron.Parse(newMessage.Cron)
+	entryID, err := p.pluginCron.AddFunc(newMessage.Cron, func() { p.postMessage(newMessage) })
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL,
-			Text:         "Error: Your cron-syntax does not seem to be correct",
+			Text:         "Error: Cannot start cron-job. Is your cron-syntax correct?",
 		}
 	}
-
-	p.pluginCron.AddFunc(newMessage.Cron, func() { p.postMessage(newMessage) })
+	newMessage.CronID = entryID
 
 	data := p.ReadFromStorage()
 	data.ScheduledMessages = append(data.ScheduledMessages, newMessage)

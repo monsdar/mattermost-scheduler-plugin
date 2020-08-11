@@ -8,32 +8,27 @@ import (
 	"github.com/mattermost/mattermost-server/v5/model"
 )
 
-func getIndeces(command string, givenArray []ScheduledMessage) ([]int, *model.CommandResponse) {
+func getIndex(command string, givenArray []ScheduledMessage) (int, *model.CommandResponse) {
 	commandFields := strings.Fields(command)
-	indeces := []int{}
 
 	for _, field := range commandFields {
 		index, err := strconv.Atoi(field)
 		if err != nil {
-			//do nothing... The word we got is not a valid index, but perhaps the next fits...
+			continue //the field we got is not a valid index, let's check the next fields...
 		}
-		if len(givenArray) <= index {
-			return []int{}, &model.CommandResponse{
+		if (len(givenArray) <= index) || (index < 0) {
+			return -1, &model.CommandResponse{
 				ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL,
 				Text:         fmt.Sprintf("Error: Your given index of %d is not valid", index),
 			}
 		}
-		indeces = append(indeces, index)
+		return index, nil
 	}
 
-	if len(indeces) == 0 {
-		return []int{}, &model.CommandResponse{
-			ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL,
-			Text:         "Error: Please enter a valid index",
-		}
+	return -1, &model.CommandResponse{
+		ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL,
+		Text:         "Error: Please enter a valid index",
 	}
-
-	return indeces, nil
 }
 
 func (p *Plugin) postMessage(msg ScheduledMessage) *model.CommandResponse {
@@ -44,6 +39,7 @@ func (p *Plugin) postMessage(msg ScheduledMessage) *model.CommandResponse {
 		Message:   msg.Message,
 	}
 
+	//TODO: This posts every given text as simple text, even when the text should be a command like `/topic Test123`. How can I post a command?
 	if _, err := p.API.CreatePost(post); err != nil {
 		const errorMessage = "Error: Failed to create scheduled post"
 		p.API.LogError(errorMessage, "err", err.Error())
